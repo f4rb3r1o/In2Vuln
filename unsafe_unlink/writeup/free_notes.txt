@@ -1,0 +1,61 @@
+Important notes for freeing a chunk:
+
+1) __int_free is called
+	 1.1) 	do_check_inuse_chunk is being call to check whether
+		  	this is first done by calling inuse(p) macro that do the following:
+			go to the next consecutive chunk's size field and check if the PREV_INUSE flag is on.
+
+			malicious note: If we have heap overflow we can trick malloc to think that victim p freed by overriding the next chunk (p+p->size & ~FLAGS) size field and clearing the PREV_INUSE flag.
+
+			the do_check_inuse_chunk check whether the current chunk indeed used and if is surrounded be free consecutive chunks (prev and next).
+
+		 	Since we are not a fastbin candidates, we skip to line 3960. This is the part where malloc takes care of consliation:
+	
+			1.1.2) next chunk is followed (victim + victim->size & ~FLAGS)
+			1.1.3) check whether the chunk to be freed is the top chunk (alreay consolidated)
+			1.1.4) check whether the next chunk is beyond the boundaries of the arena
+			1.1.5) __glibc_unlikely (!prev_inuse(nextchunk) is checking whether the 	   victim is not already freed
+			1.1.6) check next chunk size validity (not too big, not too small)
+			1.1.7) free_perturb is called. This function is 0-ing the user data of 			the chunk to be freed
+			1.1.8) in line 4006 malloc start consolidating backwards. This is the intersting part for us since we're overriding our own last quadword of userdata and the next chunk size field to trick malloc into thinking that we're already free. thus controling the bk & fd pointers of our own.
+			1.1.9) malloc is consolidating backwards by:
+			a) summing up the current size and the previous chunk's size
+			b) setting the current chunk pointer (p) to the previous chunk
+			c) calling unlink(av, p, bck, fwd) - because the previous chunk (ie. now the current chunk), is already freed (hence, consolidation), it resides at some bin. 
+
+			backward unlink:
+				1) bck is set to p->bk and fwd is set to p->fd.
+				2) a check whether p->fd->bk != p and p->bck->fd != p is being done
+				3) the bk pointer of the next chunk in the list is set to p->bk 
+					(p->fd->bk will no longer point to p)
+				4) the fd pointer of the back chunk in the list is set to p->fd 
+					(p->bk->fd will no loner point to p)
+				5) I'll ignore the fd/bk_nextsize operations for now.
+
+				To put it all together, by setting the first two quadward of a chunk A, and overriding the last quadword of chunk A and the size field of a succeeding consecutive chunk to trick malloc that chunk A is freed, and freeing chunk B afterwards:
+					1) Malloc will write our controled fwd pointer to chunkA->bk->fd
+					2) Malloc will write our controled bck pointer to chunkA->fd->bk
+				Thus we get 8-bytes write premitive, twice.
+
+				The binary we're operting on is lacking the check that chunkA->bk->fd == p and chunkA->fd->bk == p, hence, this method will work.
+
+
+			1.2) malloc is consolidating forward by:
+			a) summing up the current size and the next chunk's size
+			b) calling unlink(av, nextchunk, bck, fwd) - because the next chunk is already freed (hence, consolidation), it resides at some bin. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
